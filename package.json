@@ -15,7 +15,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node prisma/seed.ts",
-    "vercel-build": "prisma generate && nest build"
+    "vercel-build": "npx prisma generate && nest build"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

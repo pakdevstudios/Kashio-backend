@@ -7,7 +7,12 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   async onModuleInit() {
-    await this.$connect();
+    // Connect in the background; Prisma also connects lazily on first query.
+    // Not awaiting here keeps serverless cold-starts from failing app bootstrap
+    // (e.g. a slow DB wake) — health checks stay up, queries connect on demand.
+    this.$connect().catch(() => {
+      /* first query will retry the connection */
+    });
   }
 
   async onModuleDestroy() {

@@ -1,0 +1,31 @@
+# Render Blueprint for the Kashio backend.
+# In Render: New > Blueprint > pick this repo. Then set the secret env vars
+# (DATABASE_URL, DIRECT_URL, JWT_SECRET, CORS_ORIGINS) in the dashboard.
+services:
+  - type: web
+    name: kashio-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate && npm run build
+    # Apply migrations on every deploy, then boot the server.
+    startCommand: npx prisma migrate deploy && node dist/main
+    healthCheckPath: /v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: API_PREFIX
+        value: v1
+      - key: ACCESS_TOKEN_EXPIRES_IN
+        value: 15m
+      - key: REFRESH_TOKEN_EXPIRES_DAYS
+        value: "60"
+      # Set these in the Render dashboard (marked sync:false = not in git):
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

@@ -1,0 +1,153 @@
+// Kashio delivery — Prisma schema
+// Phase 1: Auth + Courier (parcel) module. Food & Pharmacy modules to follow.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled connection (e.g. Neon -pooler host) used at runtime.
+  url       = env("DATABASE_URL")
+  // Direct connection used for migrations. Falls back to DATABASE_URL locally.
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  RIDER
+  CUSTOMER
+}
+
+enum AuthProvider {
+  PASSWORD
+  GOOGLE
+}
+
+enum CourierStatus {
+  PENDING // created, awaiting rider assignment
+  ASSIGNED // admin assigned a rider, awaiting rider acceptance
+  ACCEPTED // rider accepted the job
+  PICKED_UP // parcel picked up
+  ON_THE_WAY // en route to drop-off
+  DELIVERED // completed
+  CANCELLED // cancelled by admin/customer
+}
+
+enum ParcelWeight {
+  UPTO_5KG
+  UPTO_10KG
+}
+
+model User {
+  id        String       @id @default(uuid())
+  email     String       @unique
+  password  String? // null for Google-only accounts
+  name      String
+  phone     String?
+  avatarUrl String?
+  role      Role         @default(CUSTOMER)
+  provider  AuthProvider @default(PASSWORD)
+  googleId  String?      @unique
+  isPremium Boolean      @default(false)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  rider         Rider?
+  couriers      Courier[]      @relation("CustomerCouriers")
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+// Opaque, rotating refresh tokens (stored hashed, never in plaintext).
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Rider {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location   String?
+  vehicle    String   @default("Bike")
+  isAvailable Boolean @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  couriers Courier[] @relation("RiderCouriers")
+
+  @@map("riders")
+}
+
+model Courier {
+  id        String        @id @default(uuid())
+  code      String        @unique // human-friendly e.g. DLV-1042
+  status    CourierStatus @default(PENDING)
+
+  // What's being delivered
+  categories String[] // e.g. ["Documents", "Food"]
+  weight     ParcelWeight @default(UPTO_5KG)
+  notes      String?
+  price      Int          @default(0) // in minor units / rupees
+
+  // Pickup
+  pickupName    String
+  pickupContact String
+  pickupAddress String
+  pickupLat     Float?
+  pickupLng     Float?
+
+  // Drop-off
+  dropName    String
+  dropContact String
+  dropAddress String
+  dropLat     Float?
+  dropLng     Float?
+
+  // Relations
+  customerId String?
+  customer   User?   @relation("CustomerCouriers", fields: [customerId], references: [id], onDelete: SetNull)
+  riderId    String?
+  rider      Rider?  @relation("RiderCouriers", fields: [riderId], references: [id], onDelete: SetNull)
+
+  // Lifecycle timestamps
+  assignedAt    DateTime?
+  acceptedAt    DateTime?
+  pickedUpAt    DateTime?
+  deliveredAt   DateTime?
+  cancelledAt   DateTime?
+  cancelReason  String?
+
+  events    CourierEvent[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([riderId])
+  @@map("couriers")
+}
+
+// Status history / tracking timeline for a courier booking.
+model CourierEvent {
+  id        String        @id @default(uuid())
+  courierId String
+  courier   Courier       @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  status    CourierStatus
+  note      String?
+  createdAt DateTime      @default(now())
+
+  @@index([courierId])
+  @@map("courier_events")
+}

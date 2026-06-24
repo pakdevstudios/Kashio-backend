@@ -14,7 +14,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "db:seed": "ts-node prisma/seed.ts"
+    "db:seed": "ts-node prisma/seed.ts",
+    "vercel-build": "prisma generate && nest build"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -30,6 +31,7 @@
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "express": "^4.22.2",
     "google-auth-library": "^10.7.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

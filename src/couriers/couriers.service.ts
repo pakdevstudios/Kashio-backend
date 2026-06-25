@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -95,6 +96,56 @@ export class CouriersService {
       include: this.fullInclude(),
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // --- Open pool: unassigned jobs riders can claim -----------------------
+  async availableForRiders() {
+    return this.prisma.courier.findMany({
+      where: { status: CourierStatus.PENDING, riderId: null },
+      include: this.fullInclude(),
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  // --- Open pool: a rider self-claims a pending job ----------------------
+  // PENDING -> ACCEPTED in one guarded step. The updateMany acts as an atomic
+  // compare-and-set so two riders can't grab the same job (whoever lands the
+  // write first wins; the loser gets a 409).
+  async claimByRider(id: string, user: AuthUser) {
+    if (!user.riderId) {
+      throw new ForbiddenException('Only riders can claim jobs');
+    }
+    const now = new Date();
+    const { count } = await this.prisma.courier.updateMany({
+      where: { id, status: CourierStatus.PENDING, riderId: null },
+      data: {
+        riderId: user.riderId,
+        status: CourierStatus.ACCEPTED,
+        assignedAt: now,
+        acceptedAt: now,
+      },
+    });
+    if (count === 0) {
+      // Either it doesn't exist or another rider already claimed it.
+      const exists = await this.prisma.courier.findUnique({ where: { id } });
+      if (!exists) throw new NotFoundException('Courier not found');
+      throw new ConflictException('Job already taken');
+    }
+    await this.prisma.courierEvent.createMany({
+      data: [
+        {
+          courierId: id,
+          status: CourierStatus.ASSIGNED,
+          note: 'Claimed by rider',
+        },
+        {
+          courierId: id,
+          status: CourierStatus.ACCEPTED,
+          note: 'Rider accepted',
+        },
+      ],
+    });
+    return this.findOne(id);
   }
 
   // --- Tracking timeline --------------------------------------------------

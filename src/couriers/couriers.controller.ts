@@ -52,10 +52,25 @@ export class CouriersController {
     return this.couriersService.findForCustomer(user.id);
   }
 
+  // GET /v1/couriers/available — open pool of unassigned jobs for riders
+  // (literal route must precede the :id route below)
+  @Get('available')
+  @Roles(Role.RIDER)
+  available() {
+    return this.couriersService.availableForRiders();
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.RIDER)
   findOne(@Param('id') id: string) {
     return this.couriersService.findOne(id);
+  }
+
+  // POST /v1/couriers/:id/claim — rider self-claims a pending job
+  @Post(':id/claim')
+  @Roles(Role.RIDER)
+  claim(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.couriersService.claimByRider(id, user);
   }
 
   // GET /v1/couriers/:id/track — tracking timeline

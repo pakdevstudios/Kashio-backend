@@ -93,6 +93,20 @@ model Rider {
   @@map("riders")
 }
 
+model Category {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([name])
+  @@map("categories")
+}
+
 model Courier {
   id        String        @id @default(uuid())
   code      String        @unique // human-friendly e.g. DLV-1042

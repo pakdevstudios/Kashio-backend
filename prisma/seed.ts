@@ -51,6 +51,22 @@ async function main() {
   }
   console.log(`Seeded ${riderSeed.length} riders (password: rider123)`);
 
+  // --- Categories ---
+  const categorySeed = [
+    { name: 'Documents', slug: 'documents' },
+    { name: 'Electronics', slug: 'electronics' },
+    { name: 'Food', slug: 'food' },
+    { name: 'Clothes', slug: 'clothes' },
+  ];
+  for (const category of categorySeed) {
+    await prisma.category.upsert({
+      where: { slug: category.slug },
+      update: {},
+      create: category,
+    });
+  }
+  console.log(`Seeded ${categorySeed.length} categories`);
+
   // --- Sample couriers (only when table is empty) ---
   const existing = await prisma.courier.count();
   if (existing === 0) {

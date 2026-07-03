@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { ParcelWeight } from '@prisma/client';
 
@@ -31,17 +32,24 @@ export class CreateCourierDto {
   price?: number;
 
   // Pickup
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  pickupName: string;
+  pickupAddressId?: string;
 
+  @ValidateIf((dto: CreateCourierDto) => !dto.pickupAddressId)
   @IsString()
   @IsNotEmpty()
-  pickupContact: string;
+  pickupName?: string;
 
+  @ValidateIf((dto: CreateCourierDto) => !dto.pickupAddressId)
   @IsString()
   @IsNotEmpty()
-  pickupAddress: string;
+  pickupContact?: string;
+
+  @ValidateIf((dto: CreateCourierDto) => !dto.pickupAddressId)
+  @IsString()
+  @IsNotEmpty()
+  pickupAddress?: string;
 
   @IsOptional()
   @IsNumber()
@@ -52,17 +60,24 @@ export class CreateCourierDto {
   pickupLng?: number;
 
   // Drop-off
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  dropName: string;
+  dropAddressId?: string;
 
+  @ValidateIf((dto: CreateCourierDto) => !dto.dropAddressId)
   @IsString()
   @IsNotEmpty()
-  dropContact: string;
+  dropName?: string;
 
+  @ValidateIf((dto: CreateCourierDto) => !dto.dropAddressId)
   @IsString()
   @IsNotEmpty()
-  dropAddress: string;
+  dropContact?: string;
+
+  @ValidateIf((dto: CreateCourierDto) => !dto.dropAddressId)
+  @IsString()
+  @IsNotEmpty()
+  dropAddress?: string;
 
   @IsOptional()
   @IsNumber()

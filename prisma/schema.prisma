@@ -48,6 +48,16 @@ enum SupplierStatus {
   PENDING
 }
 
+enum ProductType {
+  SIMPLE
+  VARIABLE
+}
+
+enum VariationSelectionType {
+  SINGLE
+  MULTIPLE
+}
+
 model User {
   id        String       @id @default(uuid())
   email     String       @unique
@@ -65,6 +75,8 @@ model User {
 
   rider         Rider?
   couriers      Courier[]      @relation("CustomerCouriers")
+  carts         Cart[]
+  addresses     Address[]
   refreshTokens RefreshToken[]
 
   @@map("users")
@@ -117,27 +129,42 @@ model Category {
 }
 
 model Product {
-  id              String   @id @default(uuid())
-  title           String
-  slug            String   @unique
-  description     String?
-  categoryId      String
-  category        Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  supplierId      String?
-  supplier        Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  storeName       String?
-  price           Int
-  discountedPrice Int?
-  stockQuantity   Int      @default(0)
-  isActive        Boolean  @default(true)
-  isAvailable     Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                                String                 @id @default(uuid())
+  title                             String
+  slug                              String                 @unique
+  description                       String?
+  categoryId                        String
+  category                          Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  supplierId                        String?
+  supplier                          Supplier?              @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  storeName                         String?
+  productType                       ProductType            @default(VARIABLE)
+  price                             Int
+  discountedPrice                   Int?
+  stockQuantity                     Int                    @default(0)
+  variationLabel                    String                 @default("Variation")
+  variationSelectionType            VariationSelectionType @default(SINGLE)
+  isVariationRequired               Boolean                @default(true)
+  minVariationSelections            Int                    @default(1)
+  maxVariationSelections            Int                    @default(1)
+  allowSpecialInstructions          Boolean                @default(false)
+  specialInstructionsPlaceholder    String?
+  specialInstructionsMaxLength      Int                    @default(250)
+  isActive                          Boolean                @default(true)
+  isAvailable                       Boolean                @default(true)
+  createdAt                         DateTime               @default(now())
+  updatedAt                         DateTime               @updatedAt
 
-  images ProductImage[]
+  images                    ProductImage[]
+  variationOptions          ProductVariationOption[]
+  frequentlyBoughtItems     ProductFrequentlyBoughtItem[] @relation("ProductFrequentlyBoughtSource")
+  frequentlyBoughtOn        ProductFrequentlyBoughtItem[] @relation("ProductFrequentlyBoughtItem")
+  cartItems                 CartItem[]
+  cartAddOns                CartItemAddOn[]
 
   @@index([categoryId])
   @@index([supplierId])
+  @@index([productType])
   @@index([isActive])
   @@index([isAvailable])
   @@index([price])
@@ -200,6 +227,148 @@ model ProductImage {
   @@index([productId])
   @@index([isPrimary])
   @@map("product_images")
+}
+
+model ProductVariationOption {
+  id            String   @id @default(uuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name          String
+  sku           String?
+  price         Int
+  salePrice     Int?
+  stockQuantity Int      @default(0)
+  isActive      Boolean  @default(true)
+  isDefault     Boolean  @default(false)
+  minQuantity   Int      @default(1)
+  maxQuantity   Int      @default(99)
+  displayOrder  Int      @default(0)
+  imageUrl      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  cartItems          CartItem[]
+  cartItemVariations CartItemVariation[]
+  cartAddOns         CartItemAddOn[]
+
+  @@index([productId])
+  @@index([productId, isActive])
+  @@index([productId, displayOrder])
+  @@map("product_variation_options")
+}
+
+model ProductFrequentlyBoughtItem {
+  id               String  @id @default(uuid())
+  productId        String
+  product          Product @relation("ProductFrequentlyBoughtSource", fields: [productId], references: [id], onDelete: Cascade)
+  relatedProductId String
+  relatedProduct   Product @relation("ProductFrequentlyBoughtItem", fields: [relatedProductId], references: [id], onDelete: Restrict)
+  isDefault        Boolean @default(false)
+  isActive         Boolean @default(true)
+  minQuantity      Int     @default(1)
+  maxQuantity      Int     @default(99)
+  displayOrder     Int     @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([productId, relatedProductId])
+  @@index([productId])
+  @@index([relatedProductId])
+  @@index([productId, isActive])
+  @@map("product_frequently_bought_items")
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([userId])
+  @@index([userId])
+  @@map("carts")
+}
+
+model CartItem {
+  id                  String                  @id @default(uuid())
+  cartId              String
+  cart                Cart                    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId           String
+  product             Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variationOptionId   String?
+  variationOption     ProductVariationOption? @relation(fields: [variationOptionId], references: [id], onDelete: Restrict)
+  quantity            Int
+  unitPrice           Int?
+  specialInstructions String?
+  configKey           String
+  selectedVariations  CartItemVariation[]
+  addOns              CartItemAddOn[]
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  @@unique([cartId, configKey])
+  @@index([cartId])
+  @@index([productId])
+  @@index([variationOptionId])
+  @@map("cart_items")
+}
+
+model CartItemVariation {
+  id                String                 @id @default(uuid())
+  cartItemId        String
+  cartItem          CartItem               @relation(fields: [cartItemId], references: [id], onDelete: Cascade)
+  variationOptionId String
+  variationOption   ProductVariationOption @relation(fields: [variationOptionId], references: [id], onDelete: Restrict)
+  quantity          Int
+  unitPrice         Int
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([cartItemId])
+  @@index([variationOptionId])
+  @@map("cart_item_variations")
+}
+
+model CartItemAddOn {
+  id                String                  @id @default(uuid())
+  cartItemId        String
+  cartItem          CartItem                @relation(fields: [cartItemId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variationOptionId String?
+  variationOption   ProductVariationOption? @relation(fields: [variationOptionId], references: [id], onDelete: Restrict)
+  quantity          Int
+  unitPrice         Int
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@index([cartItemId])
+  @@index([productId])
+  @@index([variationOptionId])
+  @@map("cart_item_add_ons")
+}
+
+model Address {
+  id                   String   @id @default(uuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName             String
+  phone                String
+  addressLine          String
+  city                 String
+  stateProvince        String
+  country              String
+  postalCode           String
+  deliveryInstructions String?
+  isDefault            Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@map("addresses")
 }
 
 model Courier {

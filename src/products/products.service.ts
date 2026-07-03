@@ -3,11 +3,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, ProductType, VariationSelectionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductImageDto, UpdateProductImageDto } from './dto/product-image.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
+import {
+  FrequentlyBoughtItemDto,
+  ProductVariationOptionDto,
+} from './dto/product-variation.dto';
 import {
   UpdateProductAvailabilityDto,
   AssignProductsSupplierDto,
@@ -20,6 +24,32 @@ const productInclude = {
   category: true,
   supplier: true,
   images: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
+  variationOptions: {
+    orderBy: [{ isDefault: 'desc' as const }, { displayOrder: 'asc' as const }],
+  },
+  frequentlyBoughtItems: {
+    orderBy: [{ displayOrder: 'asc' as const }, { createdAt: 'asc' as const }],
+    include: {
+      relatedProduct: {
+        include: {
+          category: true,
+          images: {
+            orderBy: [
+              { isPrimary: 'desc' as const },
+              { sortOrder: 'asc' as const },
+              { createdAt: 'asc' as const },
+            ],
+          },
+          variationOptions: {
+            orderBy: [
+              { isDefault: 'desc' as const },
+              { displayOrder: 'asc' as const },
+            ],
+          },
+        },
+      },
+    },
+  },
 };
 
 type ProductWithRelations = Prisma.ProductGetPayload<{
@@ -35,7 +65,9 @@ export class ProductsService {
     const slug = await this.createAvailableSlug(title);
     await this.assertCategoryExists(dto.categoryId);
     if (dto.supplierId) await this.assertSupplierExists(dto.supplierId);
-    this.assertValidPricing(dto.price, dto.discountedPrice);
+    await this.validateProductConfiguration(dto);
+    const variationOptions = this.normalizeVariationOptions(dto.variationOptions ?? []);
+    const derived = this.deriveProductPricing(variationOptions);
 
     return this.prisma.product.create({
       data: {
@@ -45,13 +77,33 @@ export class ProductsService {
         categoryId: dto.categoryId,
         supplierId: dto.supplierId || null,
         storeName: this.cleanOptional(dto.storeName),
-        price: dto.price,
-        discountedPrice: dto.discountedPrice,
-        stockQuantity: dto.stockQuantity ?? 0,
+        productType: ProductType.VARIABLE,
+        price: derived.price,
+        discountedPrice: derived.discountedPrice,
+        stockQuantity: derived.stockQuantity,
+        variationLabel: this.normalizeText(dto.variationLabel ?? 'Variation'),
+        variationSelectionType:
+          dto.variationSelectionType ?? VariationSelectionType.SINGLE,
+        isVariationRequired: dto.isVariationRequired ?? true,
+        minVariationSelections: dto.minVariationSelections ?? 1,
+        maxVariationSelections: dto.maxVariationSelections ?? 1,
+        allowSpecialInstructions: dto.allowSpecialInstructions ?? false,
+        specialInstructionsPlaceholder: this.cleanOptional(
+          dto.specialInstructionsPlaceholder,
+        ),
+        specialInstructionsMaxLength: dto.specialInstructionsMaxLength ?? 250,
         isActive: dto.isActive ?? true,
         isAvailable: dto.isAvailable ?? true,
         images: dto.images?.length
           ? { create: this.normalizeImages(dto.images) }
+          : undefined,
+        variationOptions: { create: variationOptions },
+        frequentlyBoughtItems: dto.frequentlyBoughtItems?.length
+          ? {
+              create: await this.normalizeFrequentlyBoughtItems(
+                dto.frequentlyBoughtItems,
+              ),
+            }
           : undefined,
       },
       include: productInclude,
@@ -98,7 +150,7 @@ export class ProductsService {
     });
 
     if (!product) throw new NotFoundException('Product not found');
-    return this.toPublicProduct(product);
+    return this.toPublicProduct(product, true);
   }
 
   async findManagement(query: ProductQueryDto) {
@@ -121,7 +173,7 @@ export class ProductsService {
     ]);
 
     return {
-      data: items,
+      data: items.map((product) => this.toManagementProduct(product)),
       meta: {
         page,
         limit,
@@ -156,15 +208,33 @@ export class ProductsService {
         ? { connect: { id: dto.supplierId } }
         : { disconnect: true };
     }
-    if (dto.price !== undefined || dto.discountedPrice !== undefined) {
-      this.assertValidPricing(
-        dto.price ?? existing.price,
-        dto.discountedPrice ?? existing.discountedPrice ?? undefined,
+    data.productType = ProductType.VARIABLE;
+    if (dto.variationLabel !== undefined) {
+      data.variationLabel = this.normalizeText(dto.variationLabel || 'Variation');
+    }
+    if (dto.variationSelectionType !== undefined) {
+      data.variationSelectionType = dto.variationSelectionType;
+    }
+    if (dto.isVariationRequired !== undefined) {
+      data.isVariationRequired = dto.isVariationRequired;
+    }
+    if (dto.minVariationSelections !== undefined) {
+      data.minVariationSelections = dto.minVariationSelections;
+    }
+    if (dto.maxVariationSelections !== undefined) {
+      data.maxVariationSelections = dto.maxVariationSelections;
+    }
+    if (dto.allowSpecialInstructions !== undefined) {
+      data.allowSpecialInstructions = dto.allowSpecialInstructions;
+    }
+    if (dto.specialInstructionsPlaceholder !== undefined) {
+      data.specialInstructionsPlaceholder = this.cleanOptional(
+        dto.specialInstructionsPlaceholder,
       );
     }
-    if (dto.price !== undefined) data.price = dto.price;
-    if (dto.discountedPrice !== undefined) data.discountedPrice = dto.discountedPrice;
-    if (dto.stockQuantity !== undefined) data.stockQuantity = dto.stockQuantity;
+    if (dto.specialInstructionsMaxLength !== undefined) {
+      data.specialInstructionsMaxLength = dto.specialInstructionsMaxLength;
+    }
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.isAvailable !== undefined) data.isAvailable = dto.isAvailable;
     if (dto.images !== undefined) {
@@ -173,10 +243,64 @@ export class ProductsService {
         create: this.normalizeImages(dto.images),
       };
     }
+    const nextVariationOptions = dto.variationOptions ?? existing.variationOptions;
+    await this.validateProductConfiguration({
+      productType: ProductType.VARIABLE,
+      variationSelectionType:
+        dto.variationSelectionType ?? existing.variationSelectionType,
+      isVariationRequired:
+        dto.isVariationRequired ?? existing.isVariationRequired,
+      minVariationSelections:
+        dto.minVariationSelections ?? existing.minVariationSelections,
+      maxVariationSelections:
+        dto.maxVariationSelections ?? existing.maxVariationSelections,
+      variationOptions: nextVariationOptions,
+      frequentlyBoughtItems:
+        dto.frequentlyBoughtItems ?? existing.frequentlyBoughtItems,
+    });
+    const normalizedVariationOptions =
+      dto.variationOptions !== undefined
+        ? this.normalizeVariationOptions(dto.variationOptions)
+        : existing.variationOptions.map((option) => ({
+            name: option.name,
+            sku: option.sku,
+            price: option.price,
+            salePrice: option.salePrice,
+            stockQuantity: option.stockQuantity,
+            isActive: option.isActive,
+            isDefault: option.isDefault,
+            minQuantity: option.minQuantity,
+            maxQuantity: option.maxQuantity,
+            displayOrder: option.displayOrder,
+            imageUrl: option.imageUrl,
+          }));
+    const derived = this.deriveProductPricing(normalizedVariationOptions);
 
     return this.prisma.product.update({
       where: { id },
-      data,
+      data: {
+        ...data,
+        price: derived.price,
+        discountedPrice: derived.discountedPrice,
+        stockQuantity: derived.stockQuantity,
+        variationOptions:
+          dto.variationOptions !== undefined
+            ? {
+                deleteMany: {},
+                create: this.normalizeVariationOptions(dto.variationOptions),
+              }
+            : undefined,
+        frequentlyBoughtItems:
+          dto.frequentlyBoughtItems !== undefined
+            ? {
+                deleteMany: {},
+                create: await this.normalizeFrequentlyBoughtItems(
+                  dto.frequentlyBoughtItems,
+                  id,
+                ),
+              }
+            : undefined,
+      },
       include: productInclude,
     });
   }
@@ -191,16 +315,9 @@ export class ProductsService {
   }
 
   async updatePricing(id: string, dto: UpdateProductPricingDto) {
+    void dto;
     await this.findManagementOne(id);
-    this.assertValidPricing(dto.price, dto.discountedPrice);
-    return this.prisma.product.update({
-      where: { id },
-      data: {
-        price: dto.price,
-        discountedPrice: dto.discountedPrice,
-      },
-      include: productInclude,
-    });
+    throw new BadRequestException('Product pricing is managed through variations');
   }
 
   async updateAvailability(id: string, dto: UpdateProductAvailabilityDto) {
@@ -219,12 +336,9 @@ export class ProductsService {
   }
 
   async updateStock(id: string, dto: UpdateProductStockDto) {
+    void dto;
     await this.findManagementOne(id);
-    return this.prisma.product.update({
-      where: { id },
-      data: { stockQuantity: dto.stockQuantity },
-      include: productInclude,
-    });
+    throw new BadRequestException('Product stock is managed through variations');
   }
 
   async assignSupplier(dto: AssignProductsSupplierDto) {
@@ -383,6 +497,70 @@ export class ProductsService {
     }
   }
 
+  private async validateProductConfiguration(dto: {
+    productType?: ProductType;
+    variationSelectionType?: VariationSelectionType;
+    isVariationRequired?: boolean;
+    minVariationSelections?: number;
+    maxVariationSelections?: number;
+    variationOptions?: ProductVariationOptionDto[] | ProductWithRelations['variationOptions'];
+    frequentlyBoughtItems?:
+      | FrequentlyBoughtItemDto[]
+      | ProductWithRelations['frequentlyBoughtItems'];
+  }) {
+    const minSelections = dto.minVariationSelections ?? 1;
+    const maxSelections = dto.maxVariationSelections ?? 1;
+
+    if (maxSelections < minSelections) {
+      throw new BadRequestException('Maximum selections cannot be less than minimum selections');
+    }
+    if (dto.variationSelectionType === VariationSelectionType.SINGLE && maxSelections > 1) {
+      throw new BadRequestException('Single-select products cannot allow more than one variation');
+    }
+
+    const options = dto.variationOptions ?? [];
+    for (const option of options) {
+      if (!option.name?.trim()) {
+        throw new BadRequestException('Every variation option needs a name');
+      }
+      this.assertValidPricing(option.price, option.salePrice ?? undefined);
+      const minQuantity = option.minQuantity ?? 1;
+      const maxQuantity = option.maxQuantity ?? 99;
+      if (maxQuantity < minQuantity) {
+        throw new BadRequestException('Variation max quantity cannot be below min quantity');
+      }
+    }
+
+    const activeOptions = options.filter((option) => option.isActive !== false);
+    if (activeOptions.length === 0) {
+      throw new BadRequestException('Products need at least one active variation');
+    }
+
+    const defaultCount = activeOptions.filter((option) => option.isDefault).length;
+    if (defaultCount > 1 && dto.variationSelectionType !== VariationSelectionType.MULTIPLE) {
+      throw new BadRequestException('Only one default variation is allowed for single-select products');
+    }
+
+    const relatedIds = (dto.frequentlyBoughtItems ?? [])
+      .filter((item) => item.isActive !== false)
+      .map((item) => item.relatedProductId);
+    if (new Set(relatedIds).size !== relatedIds.length) {
+      throw new BadRequestException('Duplicate frequently bought items are not allowed');
+    }
+    if (relatedIds.length) {
+      const products = await this.prisma.product.findMany({
+        where: { id: { in: relatedIds } },
+        select: { id: true, isActive: true },
+      });
+      if (products.length !== relatedIds.length) {
+        throw new NotFoundException('One or more frequently bought products were not found');
+      }
+      if (products.some((product) => !product.isActive)) {
+        throw new BadRequestException('Frequently bought products must be active');
+      }
+    }
+  }
+
   private async createAvailableSlug(title: string, currentId?: string) {
     const base = this.slugify(title);
     let slug = base;
@@ -426,30 +604,258 @@ export class ProductsService {
     }));
   }
 
-  private toPublicProduct(product: ProductWithRelations) {
+  private normalizeVariationOptions(options: ProductVariationOptionDto[]) {
+    const primaryIndex = options.findIndex((option) => option.isDefault);
+    return options.map((option, index) => {
+      const minQuantity = option.minQuantity ?? 1;
+      const maxQuantity = option.maxQuantity ?? 99;
+      return {
+        name: this.normalizeText(option.name),
+        sku: this.cleanOptional(option.sku),
+        price: option.price,
+        salePrice: option.salePrice ?? null,
+        stockQuantity: option.stockQuantity ?? 0,
+        isActive: option.isActive ?? true,
+        isDefault:
+          primaryIndex >= 0
+            ? index === primaryIndex
+            : index === 0 && option.isActive !== false,
+        minQuantity,
+        maxQuantity,
+        displayOrder: option.displayOrder ?? index,
+        imageUrl: this.cleanOptional(option.imageUrl),
+      };
+    });
+  }
+
+  private deriveProductPricing(
+    options: Array<{
+      price: number;
+      salePrice?: number | null;
+      stockQuantity: number;
+      isActive: boolean;
+      isDefault: boolean;
+    }>,
+  ) {
+    const activeOptions = options.filter((option) => option.isActive);
+    if (!activeOptions.length) {
+      throw new BadRequestException('Products need at least one active variation');
+    }
+    const defaultOption =
+      activeOptions.find((option) => option.isDefault) ??
+      [...activeOptions].sort(
+        (a, b) => this.effectiveOptionPrice(a) - this.effectiveOptionPrice(b),
+      )[0];
     return {
+      price: defaultOption.price,
+      discountedPrice: defaultOption.salePrice ?? null,
+      stockQuantity: activeOptions.reduce(
+        (sum, option) => sum + option.stockQuantity,
+        0,
+      ),
+    };
+  }
+
+  private async normalizeFrequentlyBoughtItems(
+    items: FrequentlyBoughtItemDto[],
+    productId?: string,
+  ) {
+    const normalized = items.map((item, index) => {
+      if (productId && item.relatedProductId === productId) {
+        throw new BadRequestException(
+          'A product cannot be assigned as its own frequently bought item',
+        );
+      }
+      const minQuantity = item.minQuantity ?? 1;
+      const maxQuantity = item.maxQuantity ?? 99;
+      if (maxQuantity < minQuantity) {
+        throw new BadRequestException('Add-on max quantity cannot be below min quantity');
+      }
+      return {
+        relatedProductId: item.relatedProductId,
+        isDefault: item.isDefault ?? false,
+        isActive: item.isActive ?? true,
+        minQuantity,
+        maxQuantity,
+        displayOrder: item.displayOrder ?? index,
+      };
+    });
+
+    const activeIds = normalized
+      .filter((item) => item.isActive)
+      .map((item) => item.relatedProductId);
+    if (new Set(activeIds).size !== activeIds.length) {
+      throw new BadRequestException('Duplicate frequently bought items are not allowed');
+    }
+
+    return normalized;
+  }
+
+  private toManagementProduct(product: ProductWithRelations) {
+    return {
+      ...this.toPublicProduct(product, true),
+      category: {
+        id: product.category.id,
+        slug: product.category.slug,
+        name: product.category.name,
+        description: product.category.description,
+      },
+      supplier: product.supplier
+        ? {
+            id: product.supplier.id,
+            name: product.supplier.name,
+            status: product.supplier.status,
+          }
+        : null,
+      isActive: product.isActive,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
+    };
+  }
+
+  private toPublicProduct(product: ProductWithRelations, detail = false) {
+    const activeOptions = product.variationOptions.filter((option) => option.isActive);
+    const defaultOption =
+      activeOptions.find((option) => option.isDefault) ?? activeOptions[0] ?? null;
+    const lowestOption =
+      activeOptions.length > 0
+        ? [...activeOptions].sort((a, b) => this.effectiveOptionPrice(a) - this.effectiveOptionPrice(b))[0]
+        : null;
+    const displayOption = defaultOption ?? lowestOption;
+    const effectivePrice = displayOption
+      ? this.effectiveOptionPrice(displayOption)
+      : product.discountedPrice ?? product.price;
+    const stockQuantity = activeOptions.length
+      ? activeOptions.reduce((sum, option) => sum + option.stockQuantity, 0)
+      : product.stockQuantity;
+    const primaryImage = product.images.find((image) => image.isPrimary) ?? product.images[0] ?? null;
+
+    return {
+      id: product.id,
       slug: product.slug,
       title: product.title,
       description: product.description,
       storeName: product.storeName,
+      productType: ProductType.VARIABLE,
       price: product.price,
       discountedPrice: product.discountedPrice,
-      effectivePrice: product.discountedPrice ?? product.price,
+      effectivePrice,
+      displayPrice: effectivePrice,
+      startingPrice: lowestOption ? this.effectiveOptionPrice(lowestOption) : effectivePrice,
+      priceLabel: defaultOption ? null : 'Starting from',
       isAvailable: product.isAvailable,
-      stockQuantity: product.stockQuantity,
-      inStock: product.stockQuantity > 0,
+      stockQuantity,
+      inStock: stockQuantity > 0,
       category: {
+        id: product.category.id,
         slug: product.category.slug,
         name: product.category.name,
         description: product.category.description,
       },
       images: product.images.map((image) => ({
+        id: image.id,
         url: image.url,
         altText: image.altText,
         sortOrder: image.sortOrder,
         isPrimary: image.isPrimary,
+        isCover: image.id === primaryImage?.id,
       })),
+      image: primaryImage
+        ? { url: primaryImage.url, altText: primaryImage.altText }
+        : null,
+      coverImage: primaryImage
+        ? {
+            url: primaryImage.url,
+            altText: primaryImage.altText,
+            sortOrder: primaryImage.sortOrder,
+            isCover: true,
+          }
+        : null,
+      variationConfig: {
+        label: product.variationLabel,
+        selectionType: product.variationSelectionType,
+        required: product.isVariationRequired,
+        minSelections: product.minVariationSelections,
+        maxSelections: product.maxVariationSelections,
+      },
+      variationOptions: activeOptions.map((option) => ({
+        id: option.id,
+        name: option.name,
+        sku: option.sku,
+        price: option.price,
+        salePrice: option.salePrice,
+        effectivePrice: this.effectiveOptionPrice(option),
+        stockQuantity: option.stockQuantity,
+        inStock: option.stockQuantity > 0,
+        isActive: option.isActive,
+        isDefault: option.isDefault,
+        minQuantity: option.minQuantity,
+        maxQuantity: option.maxQuantity,
+        displayOrder: option.displayOrder,
+        imageUrl: option.imageUrl,
+      })),
+      frequentlyBoughtTogether: detail
+        ? product.frequentlyBoughtItems
+            .filter((item) => item.isActive && item.relatedProduct.isActive)
+            .map((item) => {
+              const related = item.relatedProduct;
+              const relatedActiveOptions = related.variationOptions.filter(
+                (option) => option.isActive,
+              );
+              const relatedDefaultOption =
+                relatedActiveOptions.find((option) => option.isDefault) ??
+                relatedActiveOptions[0] ??
+                null;
+              const relatedPrice = relatedDefaultOption
+                ? this.effectiveOptionPrice(relatedDefaultOption)
+                : related.price;
+              const image =
+                related.images.find((productImage) => productImage.isPrimary) ??
+                related.images[0] ??
+                null;
+              return {
+                id: item.id,
+                productId: related.id,
+                slug: related.slug,
+                title: related.title,
+                productType: ProductType.VARIABLE,
+                price: related.price,
+                discountedPrice: related.discountedPrice,
+                effectivePrice: relatedPrice,
+                defaultVariationOptionId: relatedDefaultOption?.id ?? null,
+                image: image
+                  ? { url: image.url, altText: image.altText }
+                  : null,
+                isDefault: item.isDefault,
+                isActive: item.isActive,
+                inStock:
+                  relatedActiveOptions.some((option) => option.stockQuantity > 0),
+                minQuantity: item.minQuantity,
+                maxQuantity: item.maxQuantity,
+                displayOrder: item.displayOrder,
+                variationOptions: relatedActiveOptions.map((option) => ({
+                  id: option.id,
+                  name: option.name,
+                  price: option.price,
+                  salePrice: option.salePrice,
+                  effectivePrice: this.effectiveOptionPrice(option),
+                  stockQuantity: option.stockQuantity,
+                  isDefault: option.isDefault,
+                })),
+              };
+            })
+        : [],
+      specialInstructions: {
+        allowed: product.allowSpecialInstructions,
+        placeholder: product.specialInstructionsPlaceholder,
+        maxLength: product.specialInstructionsMaxLength,
+      },
+      requiresCustomization: true,
     };
+  }
+
+  private effectiveOptionPrice(option: { price: number; salePrice?: number | null }) {
+    return option.salePrice ?? option.price;
   }
 
   private normalizeText(value: string) {

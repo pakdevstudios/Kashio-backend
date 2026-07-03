@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourierDto } from './dto/create-courier.dto';
 import { CourierQueryDto } from './dto/courier-query.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { AddressesService } from '../addresses/addresses.service';
 
 // Allowed forward transitions for the courier lifecycle.
 const TRANSITIONS: Record<CourierStatus, CourierStatus[]> = {
@@ -28,11 +29,17 @@ const TRANSITIONS: Record<CourierStatus, CourierStatus[]> = {
 
 @Injectable()
 export class CouriersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private addressesService: AddressesService,
+  ) {}
 
   // --- Create a booking ---------------------------------------------------
   async create(dto: CreateCourierDto, customerId?: string) {
     const code = await this.generateCode();
+    const pickup = await this.resolveCourierAddress('pickup', dto, customerId);
+    const drop = await this.resolveCourierAddress('drop', dto, customerId);
+
     return this.prisma.courier.create({
       data: {
         code,
@@ -40,14 +47,14 @@ export class CouriersService {
         weight: dto.weight,
         notes: dto.notes,
         price: dto.price ?? 0,
-        pickupName: dto.pickupName,
-        pickupContact: dto.pickupContact,
-        pickupAddress: dto.pickupAddress,
+        pickupName: pickup.name,
+        pickupContact: pickup.contact,
+        pickupAddress: pickup.address,
         pickupLat: dto.pickupLat,
         pickupLng: dto.pickupLng,
-        dropName: dto.dropName,
-        dropContact: dto.dropContact,
-        dropAddress: dto.dropAddress,
+        dropName: drop.name,
+        dropContact: drop.contact,
+        dropAddress: drop.address,
         dropLat: dto.dropLat,
         dropLng: dto.dropLng,
         customerId: customerId ?? null,
@@ -322,6 +329,46 @@ export class CouriersService {
       },
       customer: { select: { id: true, name: true, phone: true } },
     } satisfies Prisma.CourierInclude;
+  }
+
+  private async resolveCourierAddress(
+    type: 'pickup' | 'drop',
+    dto: CreateCourierDto,
+    customerId?: string,
+  ) {
+    const addressId =
+      type === 'pickup' ? dto.pickupAddressId : dto.dropAddressId;
+
+    if (addressId) {
+      if (!customerId) {
+        throw new BadRequestException(
+          'Saved addresses can only be used by customer accounts',
+        );
+      }
+
+      const address = await this.addressesService.findOwnedAddress(
+        customerId,
+        addressId,
+      );
+
+      return {
+        name: address.fullName,
+        contact: address.phone,
+        address: this.addressesService.formatForCourier(address),
+      };
+    }
+
+    const name = type === 'pickup' ? dto.pickupName : dto.dropName;
+    const contact = type === 'pickup' ? dto.pickupContact : dto.dropContact;
+    const address = type === 'pickup' ? dto.pickupAddress : dto.dropAddress;
+
+    if (!name || !contact || !address) {
+      throw new BadRequestException(
+        `${type} address details are required when no saved address is selected`,
+      );
+    }
+
+    return { name, contact, address };
   }
 
   // DLV-1042 style sequential-ish code.

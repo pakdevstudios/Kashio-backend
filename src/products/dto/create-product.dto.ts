@@ -32,6 +32,10 @@ export class CreateProductDto {
   @MaxLength(160)
   storeName?: string;
 
+  @IsOptional()
+  @IsString()
+  supplierId?: string | null;
+
   @IsInt()
   @Min(0)
   price: number;

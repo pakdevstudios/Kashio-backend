@@ -35,6 +35,10 @@ export class UpdateProductDto {
   storeName?: string;
 
   @IsOptional()
+  @IsString()
+  supplierId?: string | null;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   price?: number;
@@ -89,4 +93,14 @@ export class UpdateProductStockDto {
   @IsInt()
   @Min(0)
   stockQuantity: number;
+}
+
+export class AssignProductsSupplierDto {
+  @IsArray()
+  @IsString({ each: true })
+  productIds: string[];
+
+  @IsOptional()
+  @IsString()
+  supplierId?: string | null;
 }

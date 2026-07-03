@@ -6,6 +6,8 @@ import { RidersModule } from './riders/riders.module';
 import { CouriersModule } from './couriers/couriers.module';
 import { CategoriesModule } from './categories/categories.module';
 import { ProductsModule } from './products/products.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { BannersModule } from './banners/banners.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -17,6 +19,8 @@ import { HealthController } from './health.controller';
     CouriersModule,
     CategoriesModule,
     ProductsModule,
+    SuppliersModule,
+    BannersModule,
   ],
   controllers: [HealthController],
 })

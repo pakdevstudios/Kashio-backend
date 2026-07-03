@@ -41,6 +41,13 @@ enum ParcelWeight {
   UPTO_10KG
 }
 
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
 model User {
   id        String       @id @default(uuid())
   email     String       @unique
@@ -116,6 +123,8 @@ model Product {
   description     String?
   categoryId      String
   category        Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  supplierId      String?
+  supplier        Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   storeName       String?
   price           Int
   discountedPrice Int?
@@ -128,11 +137,53 @@ model Product {
   images ProductImage[]
 
   @@index([categoryId])
+  @@index([supplierId])
   @@index([isActive])
   @@index([isAvailable])
   @@index([price])
   @@index([title])
   @@map("products")
+}
+
+model Supplier {
+  id            String         @id @default(uuid())
+  name          String
+  slug          String         @unique
+  companyName   String?
+  contactName   String?
+  email         String?
+  phone         String?
+  address       String?
+  city          String?
+  notes         String?
+  status        SupplierStatus @default(PENDING)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  products Product[]
+
+  @@index([status])
+  @@index([name])
+  @@index([email])
+  @@map("suppliers")
+}
+
+model Banner {
+  id           String   @id @default(uuid())
+  title        String
+  imageUrl     String
+  redirectUrl  String?
+  targetType   String?
+  targetId     String?
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([displayOrder])
+  @@index([title])
+  @@map("banners")
 }
 
 model ProductImage {

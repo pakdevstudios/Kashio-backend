@@ -19,6 +19,7 @@ import { ProductImageDto, UpdateProductImageDto } from './dto/product-image.dto'
 import { ProductQueryDto } from './dto/product-query.dto';
 import {
   UpdateProductAvailabilityDto,
+  AssignProductsSupplierDto,
   UpdateProductDto,
   UpdateProductPricingDto,
   UpdateProductStockDto,
@@ -64,6 +65,12 @@ export class ProductsController {
   @Roles(Role.ADMIN)
   create(@Body() dto: CreateProductDto) {
     return this.productsService.create(dto);
+  }
+
+  @Patch('supplier/assign')
+  @Roles(Role.ADMIN)
+  assignSupplier(@Body() dto: AssignProductsSupplierDto) {
+    return this.productsService.assignSupplier(dto);
   }
 
   @Patch(':id')

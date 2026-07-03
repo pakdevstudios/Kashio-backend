@@ -10,6 +10,7 @@ import { ProductImageDto, UpdateProductImageDto } from './dto/product-image.dto'
 import { ProductQueryDto } from './dto/product-query.dto';
 import {
   UpdateProductAvailabilityDto,
+  AssignProductsSupplierDto,
   UpdateProductDto,
   UpdateProductPricingDto,
   UpdateProductStockDto,
@@ -17,6 +18,7 @@ import {
 
 const productInclude = {
   category: true,
+  supplier: true,
   images: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
 };
 
@@ -32,6 +34,7 @@ export class ProductsService {
     const title = this.normalizeText(dto.title);
     const slug = await this.createAvailableSlug(title);
     await this.assertCategoryExists(dto.categoryId);
+    if (dto.supplierId) await this.assertSupplierExists(dto.supplierId);
     this.assertValidPricing(dto.price, dto.discountedPrice);
 
     return this.prisma.product.create({
@@ -40,6 +43,7 @@ export class ProductsService {
         slug,
         description: this.cleanOptional(dto.description),
         categoryId: dto.categoryId,
+        supplierId: dto.supplierId || null,
         storeName: this.cleanOptional(dto.storeName),
         price: dto.price,
         discountedPrice: dto.discountedPrice,
@@ -146,6 +150,12 @@ export class ProductsService {
     if (dto.storeName !== undefined) {
       data.storeName = this.cleanOptional(dto.storeName);
     }
+    if (dto.supplierId !== undefined) {
+      if (dto.supplierId) await this.assertSupplierExists(dto.supplierId);
+      data.supplier = dto.supplierId
+        ? { connect: { id: dto.supplierId } }
+        : { disconnect: true };
+    }
     if (dto.price !== undefined || dto.discountedPrice !== undefined) {
       this.assertValidPricing(
         dto.price ?? existing.price,
@@ -215,6 +225,22 @@ export class ProductsService {
       data: { stockQuantity: dto.stockQuantity },
       include: productInclude,
     });
+  }
+
+  async assignSupplier(dto: AssignProductsSupplierDto) {
+    const productIds = [...new Set(dto.productIds.map((id) => id.trim()).filter(Boolean))];
+    if (!productIds.length) {
+      throw new BadRequestException('Select at least one product');
+    }
+    if (dto.supplierId) await this.assertSupplierExists(dto.supplierId);
+    await this.assertProductsExist(productIds);
+
+    await this.prisma.product.updateMany({
+      where: { id: { in: productIds } },
+      data: { supplierId: dto.supplierId || null },
+    });
+
+    return { success: true };
   }
 
   async addImage(productId: string, dto: ProductImageDto) {
@@ -338,6 +364,23 @@ export class ProductsService {
       select: { id: true },
     });
     if (!category) throw new NotFoundException('Category not found');
+  }
+
+  private async assertSupplierExists(supplierId: string) {
+    const supplier = await this.prisma.supplier.findUnique({
+      where: { id: supplierId },
+      select: { id: true },
+    });
+    if (!supplier) throw new NotFoundException('Supplier not found');
+  }
+
+  private async assertProductsExist(productIds: string[]) {
+    const count = await this.prisma.product.count({
+      where: { id: { in: productIds } },
+    });
+    if (count !== productIds.length) {
+      throw new NotFoundException('One or more products were not found');
+    }
   }
 
   private async createAvailableSlug(title: string, currentId?: string) {

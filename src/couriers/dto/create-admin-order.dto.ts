@@ -80,9 +80,10 @@ export class AdminOrderItemDto {
   @Min(1)
   quantity: number;
 
+  @IsOptional()
   @IsInt()
   @Min(0)
-  price: number;
+  price?: number;
 }
 
 export class CreateAdminOrderDto {

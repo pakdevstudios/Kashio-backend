@@ -573,7 +573,11 @@ export class CouriersService {
         productName: product.title,
         selectedVariant: variant?.name ?? null,
         categoryName: product.category.name,
-        price: item.price,
+        price:
+          item.price ??
+          (variant
+            ? variant.salePrice ?? variant.price
+            : product.discountedPrice ?? product.price),
         quantity: item.quantity,
       };
     });

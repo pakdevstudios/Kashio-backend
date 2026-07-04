@@ -161,6 +161,7 @@ model Product {
   frequentlyBoughtOn        ProductFrequentlyBoughtItem[] @relation("ProductFrequentlyBoughtItem")
   cartItems                 CartItem[]
   cartAddOns                CartItemAddOn[]
+  courierOrderItems         CourierOrderItem[]
 
   @@index([categoryId])
   @@index([supplierId])
@@ -250,6 +251,7 @@ model ProductVariationOption {
   cartItems          CartItem[]
   cartItemVariations CartItemVariation[]
   cartAddOns         CartItemAddOn[]
+  courierOrderItems  CourierOrderItem[]
 
   @@index([productId])
   @@index([productId, isActive])
@@ -401,6 +403,7 @@ model Courier {
   customer   User?   @relation("CustomerCouriers", fields: [customerId], references: [id], onDelete: SetNull)
   riderId    String?
   rider      Rider?  @relation("RiderCouriers", fields: [riderId], references: [id], onDelete: SetNull)
+  orderItems CourierOrderItem[]
 
   // Lifecycle timestamps
   assignedAt    DateTime?
@@ -417,6 +420,27 @@ model Courier {
   @@index([status])
   @@index([riderId])
   @@map("couriers")
+}
+
+model CourierOrderItem {
+  id                String                  @id @default(uuid())
+  courierId         String
+  courier           Courier                 @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variationOptionId String?
+  variationOption   ProductVariationOption? @relation(fields: [variationOptionId], references: [id], onDelete: Restrict)
+  productName       String
+  selectedVariant   String?
+  price             Int
+  quantity          Int
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@index([courierId])
+  @@index([productId])
+  @@index([variationOptionId])
+  @@map("courier_order_items")
 }
 
 // Status history / tracking timeline for a courier booking.

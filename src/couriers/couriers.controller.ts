@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CouriersService } from './couriers.service';
+import { CreateAdminOrderDto } from './dto/create-admin-order.dto';
 import { CreateCourierDto } from './dto/create-courier.dto';
 import { CourierQueryDto } from './dto/courier-query.dto';
 import { AssignRiderDto } from './dto/assign-rider.dto';
@@ -43,6 +44,18 @@ export class CouriersController {
   @Roles(Role.ADMIN)
   findAll(@Query() query: CourierQueryDto) {
     return this.couriersService.findAll(query);
+  }
+
+  @Get('customers/lookup')
+  @Roles(Role.ADMIN)
+  lookupCustomer(@Query('contact') contact: string) {
+    return this.couriersService.lookupCustomerByContact(contact ?? '');
+  }
+
+  @Post('admin-orders')
+  @Roles(Role.ADMIN)
+  createAdminOrder(@Body() dto: CreateAdminOrderDto) {
+    return this.couriersService.createAdminOrder(dto);
   }
 
   // GET /v1/couriers/mine — the logged-in customer's own bookings

@@ -1,6 +1,6 @@
 # Render Blueprint for the Kashio backend.
 # In Render: New > Blueprint > pick this repo. Then set the secret env vars
-# (DATABASE_URL, DIRECT_URL, JWT_SECRET, CORS_ORIGINS) in the dashboard.
+# (DATABASE_URL, DIRECT_URL, JWT_SECRET, CORS_ORIGINS, S3 keys) in the dashboard.
 services:
   - type: web
     name: kashio-backend
@@ -16,6 +16,8 @@ services:
         value: "20"
       - key: API_PREFIX
         value: v1
+      - key: PORT
+        value: "3001"
       - key: ACCESS_TOKEN_EXPIRES_IN
         value: 15m
       - key: REFRESH_TOKEN_EXPIRES_DAYS
@@ -28,4 +30,14 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: CORS_ORIGINS
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_S3_REGION
+        sync: false
+      - key: AWS_S3_BUCKET
+        sync: false
+      - key: AWS_S3_PRESIGNED_URL_EXPIRY
         sync: false

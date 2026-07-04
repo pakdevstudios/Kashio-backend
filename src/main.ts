@@ -26,7 +26,7 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.PORT) || 3000;
+  const port = Number(process.env.PORT) || 3001;
   await app.listen(port);
   // eslint-disable-next-line no-console
   console.log(`Kashio backend running on http://localhost:${port}/${prefix}`);

@@ -45,8 +45,29 @@ JWT_SECRET     = <a long random string>
 CORS_ORIGINS   = https://kashio-admin.vercel.app
 ACCESS_TOKEN_EXPIRES_IN   = 15m
 REFRESH_TOKEN_EXPIRES_DAYS = 60
+AWS_ACCESS_KEY_ID     = <S3 upload user access key>
+AWS_SECRET_ACCESS_KEY = <S3 upload user secret>
+AWS_S3_REGION         = <bucket region>
+AWS_S3_BUCKET         = <bucket name>
+AWS_S3_PRESIGNED_URL_EXPIRY = 300
 ```
 (`PORT` is provided by Render automatically.)
+
+For product image uploads, configure the S3 bucket CORS to allow `PUT` from the
+admin dashboard origin and allow `GET` for the public image URLs.
+
+Example S3 bucket CORS:
+```
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedOrigins": ["https://kashio-admin.vercel.app"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
 
 **Seed the admin once** (Render → your service → Shell):
 ```

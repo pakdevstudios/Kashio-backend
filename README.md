@@ -16,12 +16,12 @@ Pharmacy modules are planned but not yet implemented.
 
 ```bash
 cd backend
-cp .env.example .env          # then edit DATABASE_URL / JWT_SECRET
+cp .env.example .env          # then edit DATABASE_URL / JWT_SECRET / S3 vars
 npm install
 npm run prisma:generate
 npm run prisma:migrate        # creates tables (dev migration)
 npm run db:seed               # seeds admin + riders + sample couriers
-npm run start:dev             # http://localhost:3000/v1
+npm run start:dev             # http://localhost:3001/v1
 ```
 
 Make sure PostgreSQL is running and the `kashio` database exists, e.g.:
@@ -34,6 +34,40 @@ createdb kashio
 
 - Admin: `admin@kashio.app` / `admin123`
 - Riders: `arshid@kashio.app`, `usman@kashio.app`, ... / `rider123`
+
+### Product image uploads
+
+Product images use a browser-to-S3 pre-signed PUT flow:
+
+1. Admin calls `POST /v1/uploads/images/presign` with `{ filename, contentType, size }`.
+2. Backend validates image type/size, signs a short-lived S3 PUT URL, and returns `{ uploadUrl, url, headers }`.
+3. Admin uploads the file directly to `uploadUrl`.
+4. Admin saves the returned `url` in the product `images[]` payload.
+5. Product lists/detail render the saved `url`.
+
+Required backend env vars:
+
+```bash
+AWS_ACCESS_KEY_ID=<upload user access key>
+AWS_SECRET_ACCESS_KEY=<upload user secret>
+AWS_S3_REGION=<bucket region>
+AWS_S3_BUCKET=<bucket name>
+AWS_S3_PRESIGNED_URL_EXPIRY=300
+```
+
+The S3 bucket must allow CORS `PUT` from the admin dashboard origin and public `GET` for saved image URLs. Example bucket CORS:
+
+```json
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedOrigins": ["http://localhost:3000", "https://kashio-admin.vercel.app"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
 
 ## API (all prefixed with `/v1`)
 

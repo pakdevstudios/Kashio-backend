@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "npx prisma generate && npm run build",
+  "buildCommand": "npx prisma generate && DIRECT_URL=\"${DIRECT_URL:-$DATABASE_URL}\" npx prisma migrate deploy && npm run build",
   "functions": {
     "api/index.js": {
       "includeFiles": "node_modules/.prisma/client/**",

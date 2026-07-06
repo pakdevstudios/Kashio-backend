@@ -14,11 +14,16 @@ import {
   CreateAdminOrderDto,
 } from './dto/create-admin-order.dto';
 import { CourierQueryDto } from './dto/courier-query.dto';
+import {
+  CheckoutDraftDto,
+  CreateDraftOrderDto,
+} from './dto/draft-order.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { AddressesService } from '../addresses/addresses.service';
 
 // Allowed forward transitions for the courier lifecycle.
 const TRANSITIONS: Record<CourierStatus, CourierStatus[]> = {
+  DRAFT: [CourierStatus.PENDING, CourierStatus.CANCELLED],
   PENDING: [CourierStatus.ASSIGNED, CourierStatus.CANCELLED],
   ASSIGNED: [
     CourierStatus.ACCEPTED,
@@ -164,10 +169,139 @@ export class CouriersService {
     return courier;
   }
 
+  // --- Admin: DRAFT order flow (build a cart per caller, then checkout) ----
+  // A draft is a courier in status DRAFT with no drop address yet. Many drafts
+  // can be open at once (one per phone), so the admin can juggle live calls.
+  async createDraftOrder(dto: CreateDraftOrderDto) {
+    // No transaction here: sequential queries over the pooled connection can
+    // exceed Prisma's 5s interactive-transaction limit. The resume check makes
+    // this idempotent enough for a draft.
+    const customer = await this.findOrCreateCustomerByContact(
+      this.prisma,
+      dto.contact,
+      dto.name,
+    );
+    const existing = await this.prisma.courier.findFirst({
+      where: { customerId: customer.id, status: CourierStatus.DRAFT },
+      include: this.fullInclude(),
+    });
+    if (existing) return existing;
+
+    const code = await this.generateCode();
+    return this.prisma.courier.create({
+      data: {
+        code,
+        status: CourierStatus.DRAFT,
+        categories: [],
+        price: 0,
+        pickupName: 'Kashio Dispatch',
+        pickupContact: 'N/A',
+        pickupAddress: 'Kashio Store',
+        dropName: dto.name?.trim() || customer.name,
+        dropContact: dto.contact.trim(),
+        dropAddress: 'Pending',
+        customerId: customer.id,
+        events: {
+          create: { status: CourierStatus.DRAFT, note: 'Draft started' },
+        },
+      },
+      include: this.fullInclude(),
+    });
+  }
+
+  async addDraftItem(courierId: string, dto: AdminOrderItemDto) {
+    const draft = await this.getDraft(courierId);
+    const [item] = await this.buildOrderItems([dto]);
+    const existing = draft.orderItems.find(
+      (i) =>
+        i.productId === item.productId &&
+        (i.variationOptionId ?? null) === (item.variationOptionId ?? null),
+    );
+    if (existing) {
+      await this.prisma.courierOrderItem.update({
+        where: { id: existing.id },
+        data: { quantity: existing.quantity + item.quantity, price: item.price },
+      });
+    } else {
+      await this.prisma.courierOrderItem.create({
+        data: {
+          courierId,
+          productId: item.productId,
+          variationOptionId: item.variationOptionId,
+          productName: item.productName,
+          selectedVariant: item.selectedVariant,
+          price: item.price,
+          quantity: item.quantity,
+        },
+      });
+    }
+    return this.recomputeDraft(courierId);
+  }
+
+  async updateDraftItem(courierId: string, itemId: string, quantity: number) {
+    const draft = await this.getDraft(courierId);
+    if (!draft.orderItems.some((i) => i.id === itemId)) {
+      throw new NotFoundException('Order item not found');
+    }
+    await this.prisma.courierOrderItem.update({
+      where: { id: itemId },
+      data: { quantity },
+    });
+    return this.recomputeDraft(courierId);
+  }
+
+  async removeDraftItem(courierId: string, itemId: string) {
+    const draft = await this.getDraft(courierId);
+    if (!draft.orderItems.some((i) => i.id === itemId)) {
+      throw new NotFoundException('Order item not found');
+    }
+    await this.prisma.courierOrderItem.delete({ where: { id: itemId } });
+    return this.recomputeDraft(courierId);
+  }
+
+  async checkoutDraft(courierId: string, dto: CheckoutDraftDto) {
+    const draft = await this.getDraft(courierId);
+    if (draft.orderItems.length === 0) {
+      throw new BadRequestException('Add at least one item before checkout');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const address = await this.upsertAdminAddress(
+        tx,
+        draft.customerId as string,
+        dto.address,
+      );
+      const dropAddress = this.formatAddressInput(address);
+      const total = draft.orderItems.reduce(
+        (sum, i) => sum + i.price * i.quantity,
+        0,
+      );
+      return tx.courier.update({
+        where: { id: courierId },
+        data: {
+          status: CourierStatus.PENDING,
+          categories: ['Products'],
+          price: total,
+          notes: dto.notes?.trim() || draft.notes,
+          pickupName: dto.pickupName?.trim() || draft.pickupName,
+          pickupContact: dto.pickupContact?.trim() || draft.pickupContact,
+          pickupAddress: dto.pickupAddress?.trim() || draft.pickupAddress,
+          dropName: address.fullName,
+          dropContact: address.phone,
+          dropAddress,
+          events: {
+            create: { status: CourierStatus.PENDING, note: 'Order placed' },
+          },
+        },
+        include: this.fullInclude(),
+      });
+    }, { timeout: 20000, maxWait: 10000 });
+  }
+
   // --- Listing (admin) ----------------------------------------------------
   async findAll(query: CourierQueryDto) {
     const where: Prisma.CourierWhereInput = {};
-    if (query.status) where.status = query.status;
+    // Drafts are in-progress admin carts — hide them unless explicitly queried.
+    where.status = query.status ?? { not: CourierStatus.DRAFT };
     if (query.riderId) where.riderId = query.riderId;
     if (query.search) {
       where.OR = [
@@ -196,7 +330,7 @@ export class CouriersService {
   // --- Listing (customer's own bookings) ---------------------------------
   async findForCustomer(customerId: string) {
     return this.prisma.courier.findMany({
-      where: { customerId },
+      where: { customerId, status: { not: CourierStatus.DRAFT } },
       include: this.fullInclude(),
       orderBy: { createdAt: 'desc' },
     });
@@ -604,5 +738,63 @@ export class CouriersService {
   private generatedCustomerEmail(contact: string) {
     const clean = contact.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'customer';
     return `${clean}@customer.kashio.local`;
+  }
+
+  // --- Draft helpers ------------------------------------------------------
+  private async getDraft(id: string) {
+    const courier = await this.prisma.courier.findUnique({
+      where: { id },
+      include: this.fullInclude(),
+    });
+    if (!courier) throw new NotFoundException('Draft order not found');
+    if (courier.status !== CourierStatus.DRAFT) {
+      throw new BadRequestException('Only draft orders can be modified');
+    }
+    return courier;
+  }
+
+  private async recomputeDraft(courierId: string) {
+    const items = await this.prisma.courierOrderItem.findMany({
+      where: { courierId },
+    });
+    const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    return this.prisma.courier.update({
+      where: { id: courierId },
+      data: { price: total },
+      include: this.fullInclude(),
+    });
+  }
+
+  private async findOrCreateCustomerByContact(
+    tx: Prisma.TransactionClient | PrismaService,
+    contact: string,
+    name?: string,
+  ) {
+    const clean = contact.trim();
+    const email = this.generatedCustomerEmail(clean);
+    const existing = await tx.user.findFirst({
+      where: {
+        role: Role.CUSTOMER,
+        OR: [{ phone: clean }, { email: clean.toLowerCase() }, { email }],
+      },
+    });
+    if (existing) {
+      if (name?.trim() && (!existing.name || existing.name === 'Customer')) {
+        return tx.user.update({
+          where: { id: existing.id },
+          data: { name: name.trim() },
+        });
+      }
+      return existing;
+    }
+    return tx.user.create({
+      data: {
+        name: name?.trim() || 'Customer',
+        phone: clean,
+        email,
+        role: Role.CUSTOMER,
+        provider: AuthProvider.PASSWORD,
+      },
+    });
   }
 }

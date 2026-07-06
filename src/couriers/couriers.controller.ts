@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -10,7 +11,15 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CouriersService } from './couriers.service';
-import { CreateAdminOrderDto } from './dto/create-admin-order.dto';
+import {
+  AdminOrderItemDto,
+  CreateAdminOrderDto,
+} from './dto/create-admin-order.dto';
+import {
+  CheckoutDraftDto,
+  CreateDraftOrderDto,
+  UpdateDraftItemDto,
+} from './dto/draft-order.dto';
 import { CreateCourierDto } from './dto/create-courier.dto';
 import { CourierQueryDto } from './dto/courier-query.dto';
 import { AssignRiderDto } from './dto/assign-rider.dto';
@@ -56,6 +65,13 @@ export class CouriersController {
   @Roles(Role.ADMIN)
   createAdminOrder(@Body() dto: CreateAdminOrderDto) {
     return this.couriersService.createAdminOrder(dto);
+  }
+
+  // POST /v1/couriers/admin-orders/draft — open/resume a draft cart for a caller
+  @Post('admin-orders/draft')
+  @Roles(Role.ADMIN)
+  createDraft(@Body() dto: CreateDraftOrderDto) {
+    return this.couriersService.createDraftOrder(dto);
   }
 
   // GET /v1/couriers/mine — the logged-in customer's own bookings
@@ -134,5 +150,36 @@ export class CouriersController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.couriersService.cancel(id, dto.reason, user);
+  }
+
+  // --- Draft cart management (admin) ---------------------------------------
+  // POST /v1/couriers/:id/items — add a product line to a draft
+  @Post(':id/items')
+  @Roles(Role.ADMIN)
+  addItem(@Param('id') id: string, @Body() dto: AdminOrderItemDto) {
+    return this.couriersService.addDraftItem(id, dto);
+  }
+
+  @Patch(':id/items/:itemId')
+  @Roles(Role.ADMIN)
+  updateItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: UpdateDraftItemDto,
+  ) {
+    return this.couriersService.updateDraftItem(id, itemId, dto.quantity);
+  }
+
+  @Delete(':id/items/:itemId')
+  @Roles(Role.ADMIN)
+  removeItem(@Param('id') id: string, @Param('itemId') itemId: string) {
+    return this.couriersService.removeDraftItem(id, itemId);
+  }
+
+  // POST /v1/couriers/:id/checkout — finalize a draft -> PENDING (delivery pipeline)
+  @Post(':id/checkout')
+  @Roles(Role.ADMIN)
+  checkout(@Param('id') id: string, @Body() dto: CheckoutDraftDto) {
+    return this.couriersService.checkoutDraft(id, dto);
   }
 }

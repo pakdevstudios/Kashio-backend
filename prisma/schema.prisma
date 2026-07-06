@@ -34,6 +34,7 @@ enum CourierStatus {
   ON_THE_WAY // en route to drop-off
   DELIVERED // completed
   CANCELLED // cancelled by admin/customer
+  DRAFT // admin is still building the order (call in progress); not yet placed
 }
 
 enum ParcelWeight {
